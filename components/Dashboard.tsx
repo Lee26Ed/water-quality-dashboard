@@ -43,6 +43,13 @@ function formatValue(data: SensorData, key: SensorKey): string {
   return Number.isFinite(n) ? n.toFixed(2) : "--";
 }
 
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString()
+    : d.toLocaleString();
+}
+
 function Sparkline({ values }: { values: number[] }) {
   if (values.length < 2) {
     return <div className="spark spark-empty">Collecting trend…</div>;
@@ -80,16 +87,23 @@ function StatusIcon({ status }: { status: string }) {
       </svg>
     );
   }
+  if (status === "warning" || status === "danger") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M12 7v6M12 17h.01" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
-      <path d="M12 7v6M12 17h.01" />
+      <path d="M7 12h10" />
     </svg>
   );
 }
 
 export default function Dashboard() {
   const [data, setData] = useState<SensorData | null>(null);
-  const [online, setOnline] = useState(true);
+  const [connected, setConnected] = useState(true);
   const [history, setHistory] = useState<History>({ ph: [], do: [], h2s: [], nh3: [] });
   const lastStamp = useRef<string | null | undefined>(null);
 
@@ -104,10 +118,10 @@ export default function Dashboard() {
         if (cancelled) return;
 
         setData(next);
-        setOnline(true);
+        setConnected(true);
 
         // Only record a trend point when the ESP32 has posted a new reading.
-        if (next.updated_at !== lastStamp.current) {
+        if (next.online && next.updated_at !== lastStamp.current) {
           lastStamp.current = next.updated_at;
           setHistory((prev) => {
             const out = { ...prev };
@@ -120,7 +134,7 @@ export default function Dashboard() {
         }
       } catch (error) {
         console.error("Failed to retrieve sensor data:", error);
-        if (!cancelled) setOnline(false);
+        if (!cancelled) setConnected(false);
       }
     }
 
@@ -132,17 +146,62 @@ export default function Dashboard() {
     };
   }, []);
 
-  const overall = statusClass(data?.overall_status);
-  const flagged = data
-    ? SENSORS.filter(({ key }) => {
-        const s = statusClass(data[`${key}_status`]);
-        return s === "warning" || s === "danger";
-      })
-    : [];
+  const loading = data === null && connected;
+  const sensorsOnline = connected && data?.online === true;
+  const overall = sensorsOnline ? statusClass(data?.overall_status) : "offline";
+  const flagged =
+    sensorsOnline && data
+      ? SENSORS.filter(({ key }) => {
+          const s = statusClass(data[`${key}_status`]);
+          return s === "warning" || s === "danger";
+        })
+      : [];
 
-  const lastReading = data?.updated_at
-    ? new Date(data.updated_at).toLocaleTimeString()
-    : null;
+  const lastReading = data?.updated_at ? formatTime(data.updated_at) : null;
+
+  const overallValue = loading
+    ? "Loading…"
+    : sensorsOnline
+      ? data?.overall_status ?? "--"
+      : "Offline";
+
+  let overallCopy: ReactNode;
+  if (loading) {
+    overallCopy = "Connecting to the monitoring server…";
+  } else if (!connected) {
+    overallCopy = "Can't reach the monitoring server.";
+  } else if (!sensorsOnline) {
+    overallCopy = lastReading
+      ? `No data from the sensors since ${lastReading}.` +
+        (data?.overall_status ? ` Last known status: ${data.overall_status}.` : "")
+      : "Waiting for the sensors to send data.";
+  } else {
+    overallCopy = (
+      <>
+        {STATUS_COPY[overall] ?? "Status unavailable."}
+        {flagged.length > 0 && (
+          <>
+            {" "}Check:{" "}
+            {flagged.map(({ key, label }, i) => (
+              <span key={key}>
+                {i > 0 && ", "}
+                <strong>{label}</strong>
+              </span>
+            ))}
+            .
+          </>
+        )}
+      </>
+    );
+  }
+
+  const liveLabel = loading
+    ? "Connecting"
+    : sensorsOnline
+      ? "Live"
+      : connected
+        ? "Sensors offline"
+        : "Connection lost";
 
   return (
     <>
@@ -184,9 +243,9 @@ export default function Dashboard() {
                 </svg>
                 Hopkins Village
               </span>
-              <span className={`live ${online ? "on" : "off"}`}>
+              <span className={`live ${sensorsOnline ? "on" : loading ? "" : "off"}`}>
                 <span className="live-dot" />
-                {online ? "Live" : "Offline"}
+                {liveLabel}
               </span>
             </div>
 
@@ -196,28 +255,14 @@ export default function Dashboard() {
               </span>
               <div>
                 <div className="overall-label">Overall status</div>
-                <div className="overall-value">{data?.overall_status ?? "Loading…"}</div>
+                <div className="overall-value">{overallValue}</div>
               </div>
             </div>
 
-            <p className="overall-copy">
-              {data ? STATUS_COPY[overall] ?? "Status unavailable." : "Connecting to sensors…"}
-              {flagged.length > 0 && (
-                <>
-                  {" "}Check:{" "}
-                  {flagged.map(({ key, label }, i) => (
-                    <span key={key}>
-                      {i > 0 && ", "}
-                      <strong>{label}</strong>
-                    </span>
-                  ))}
-                  .
-                </>
-              )}
-            </p>
+            <p className="overall-copy">{overallCopy}</p>
 
             <div className="overall-foot">
-              {lastReading ? `Last reading at ${lastReading}` : data ? "Showing default values, no sensor reading yet" : " "}
+              {lastReading ? `Last reading at ${lastReading}` : loading ? " " : "No sensor readings received yet"}
             </div>
           </div>
         </div>
@@ -242,17 +287,21 @@ export default function Dashboard() {
           <div className="sensor-grid">
             {SENSORS.map(({ key, label, name, unit }) => {
               const status = data?.[`${key}_status`];
-              const cls = statusClass(status);
+              const cls = sensorsOnline ? statusClass(status) : "unknown";
               const raw = data ? isRaw(data, key) : false;
+              const pill = loading ? "--" : sensorsOnline ? status ?? "--" : "Offline";
 
               return (
-                <article key={key} className={`sensor-card ${cls}`}>
+                <article
+                  key={key}
+                  className={`sensor-card ${cls}${sensorsOnline || loading ? "" : " stale"}`}
+                >
                   <div className="sensor-top">
                     <div>
                       <h3>{label}</h3>
                       <div className="sensor-name">{name}</div>
                     </div>
-                    <span className={`pill ${cls}`}>{status ?? "--"}</span>
+                    <span className={`pill ${cls}`}>{pill}</span>
                   </div>
 
                   <div className="sensor-value">

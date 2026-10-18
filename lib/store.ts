@@ -2,30 +2,27 @@ import { sendTelegram } from "./telegram";
 import type { SensorData } from "./types";
 
 type Store = {
-  sensorData: SensorData;
+  // null until the ESP32 sends its first reading.
+  sensorData: SensorData | null;
   lastAlertStatus: string;
 };
 
-const initialData: SensorData = {
-  ph: 7.12,
-  do: 6.8,
-  h2s: 0.4,
-  nh3: 0.7,
-  ph_status: "Normal",
-  do_status: "Normal",
-  h2s_status: "Normal",
-  nh3_status: "Normal",
-  overall_status: "Normal",
-};
+// Sensors count as offline if no reading arrived within this window.
+const SENSOR_TIMEOUT_MS = Number(process.env.SENSOR_TIMEOUT_MS) || 30_000;
 
 // In-memory state, kept on globalThis so it survives hot reloads in dev.
 // Like the Flask version, it resets when the server restarts.
 const g = globalThis as typeof globalThis & { __waterQualityStore?: Store };
 
 export const store: Store = (g.__waterQualityStore ??= {
-  sensorData: initialData,
+  sensorData: null,
   lastAlertStatus: "Normal",
 });
+
+export function isOnline(data: SensorData | null): boolean {
+  if (!data?.updated_at) return false;
+  return Date.now() - new Date(data.updated_at).getTime() < SENSOR_TIMEOUT_MS;
+}
 
 function buildReadingsLine(data: SensorData): string {
   const ph = data.ph ?? "--";

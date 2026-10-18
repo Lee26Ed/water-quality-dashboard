@@ -11,4 +11,6 @@ export type SensorData = { [K in SensorKey]?: number | string } & {
   overall_status?: string;
   // Set by the server when a reading is received.
   updated_at?: string;
+  // Set by the server on GET: whether a reading arrived recently.
+  online?: boolean;
 };

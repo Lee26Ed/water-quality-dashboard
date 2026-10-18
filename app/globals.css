@@ -342,6 +342,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
 .sensor-card.warning .value,
 .sensor-card.danger .value { color: var(--tone); }
 
+/* Last known values while the sensors are offline */
+.sensor-card.stale .sensor-value,
+.sensor-card.stale .sensor-trend { opacity: 0.45; }
+
 .unit { font-size: 0.95rem; font-weight: 600; color: var(--muted); }
 
 .badge {

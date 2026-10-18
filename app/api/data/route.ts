@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { checkAlert, store } from "@/lib/store";
+import { checkAlert, isOnline, store } from "@/lib/store";
 import type { SensorData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(store.sensorData);
+  return NextResponse.json({ ...store.sensorData, online: isOnline(store.sensorData) });
 }
 
 export async function POST(request: Request) {
